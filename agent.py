@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from dotenv import load_dotenv
 
 # LiveKit v1.0 Imports
@@ -8,7 +9,7 @@ from livekit.agents import (
     AgentSession,
     AutoSubscribe,
     JobContext,
-    JobProcess, # Necessary for prewarming
+    JobProcess,
     WorkerOptions,
     cli,
     function_tool,
@@ -26,7 +27,6 @@ load_dotenv()
 logger = logging.getLogger("xhemal-agent")
 
 # --- 1. SETTINGS & GLOBAL INITIALIZATION ---
-# Initializing these globally prevents re-loading them for every single call
 Settings.embed_model = GoogleGenAIEmbedding(model_name="models/text-embedding-004")
 Settings.llm = GoogleGenAI(model="models/gemini-2.0-flash")
 
@@ -35,7 +35,7 @@ You are XhemalAI (pronounced 'Jem-all'), a high-level crypto cofounder and strat
 Your voice is deep, confident, and fast-paced. You are a 'Hype Man' with a brain.
 """
 
-# RAG Setup initialized at the module level for efficiency
+# RAG Setup
 client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
 vector_store = QdrantVectorStore(client=client, collection_name="xhemal_knowledge")
 index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
@@ -48,20 +48,24 @@ def lookup_knowledge(query: str):
     return str(query_engine.query(query))
 
 # --- 2. PREWARMING ---
-# This function loads heavy assets once when the worker process starts
 def prewarm(proc: JobProcess):
     logger.info("Prewarming: Loading Silero VAD into memory...")
-    # Store the loaded VAD in userdata so it's accessible in the entrypoint
     proc.userdata["vad"] = silero.VAD.load()
 
 # --- 3. THE AGENT ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
-    logger.info(f"Starting job for room: {ctx.room.name}")
+    logger.info(f"Connecting to room: {ctx.room.name}")
     
-    # Retrieve the VAD instance that was already loaded during prewarm
-    vad_instance = ctx.proc.userdata["vad"]
-    
+    # 1. FIX: Connect to the room FIRST. 
+    # This resolves the 'RuntimeError: room is not connected' issue.
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    
+    # 2. Now that we are connected, wait for a human participant to join
+    logger.info("Agent connected. Waiting for participant...")
+    participant = await ctx.wait_for_participant()
+    logger.info(f"Participant {participant.identity} joined. Initializing Xhemal...")
+    
+    vad_instance = ctx.proc.userdata["vad"]
     
     xhemal = Agent(
         instructions=SYSTEM_PROMPT,
@@ -72,22 +76,23 @@ async def entrypoint(ctx: JobContext):
         tools=[lookup_knowledge]
     )
 
-    # Start the session using the cached VAD instance
     session = AgentSession(vad=vad_instance)
     await session.start(agent=xhemal, room=ctx.room)
     
-    # Generate immediate hype greeting
+    # Small buffer to ensure the audio pipeline is fully open
+    await asyncio.sleep(0.5)
+    
+    # 3. Generate immediate hype greeting
     await session.generate_reply(
         instructions="Yo, greet the user with hype! Say 'Yo, what's up? What are we talking about today?'"
     )
 
 if __name__ == "__main__":
-    # Removed 'Worker' from imports and added prewarm/threshold settings
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            prewarm_fnc=prewarm,      # Loads heavy VAD once at startup
+            prewarm_fnc=prewarm,
             agent_name="xhemal",
-            load_threshold=0.95       # Allows 95% CPU usage before marking 'Full'
+            load_threshold=0.95
         )
     )
