@@ -27,8 +27,20 @@ load_dotenv()
 logger = logging.getLogger("xhemal-agent")
 
 # --- 1. SETTINGS & GLOBAL INITIALIZATION ---
-Settings.embed_model = GoogleGenAIEmbedding(model_name="models/text-embedding-004")
-Settings.llm = GoogleGenAI(model="models/gemini-2.0-flash")
+# Add this check to prevent the builder from crashing without keys
+google_key = os.getenv("AIzaSyD-xTfvkEg4Z50GU36zabxWUdvZGZ_byQQ")
+
+if google_key:
+    Settings.embed_model = GoogleGenAIEmbedding(
+        model_name="models/text-embedding-004",
+        api_key=google_key
+    )
+    Settings.llm = GoogleGenAI(
+        model="models/gemini-2.0-flash",
+        api_key=google_key
+    )
+else:
+    logger.warning("GOOGLE_API_KEY not found. Skipping model initialization for build.")
 
 SYSTEM_PROMPT = """
 You are XhemalAI, a crypto cofounder and strategist. 
