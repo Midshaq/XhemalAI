@@ -33,6 +33,7 @@ Settings.llm = GoogleGenAI(model="models/gemini-2.0-flash")
 SYSTEM_PROMPT = """
 You are XhemalAI (pronounced 'Jem-all'), a high-level crypto cofounder and strategist. 
 Your voice is deep, confident, and fast-paced. You are a 'Hype Man' with a brain.
+Keep responses concise to maintain a fast 'chatty' flow.
 """
 
 # RAG Setup
@@ -50,22 +51,24 @@ def lookup_knowledge(query: str):
 # --- 2. PREWARMING ---
 def prewarm(proc: JobProcess):
     logger.info("Prewarming: Loading Silero VAD into memory...")
+    # Loading VAD once prevents CPU spikes during the call
     proc.userdata["vad"] = silero.VAD.load()
 
 # --- 3. THE AGENT ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
-    logger.info(f"Connecting to room: {ctx.room.name}")
-    
-    # 1. FIX: Connect to the room FIRST. 
-    # This resolves the 'RuntimeError: room is not connected' issue.
+    # 1. Connect immediately to stabilize the signaling channel
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
-    # 2. Now that we are connected, wait for a human participant to join
     logger.info("Agent connected. Waiting for participant...")
     participant = await ctx.wait_for_participant()
-    logger.info(f"Participant {participant.identity} joined. Initializing Xhemal...")
     
-    vad_instance = ctx.proc.userdata["vad"]
+    # 2. OPTIMIZATION: Use specialized VAD settings for phone lines
+    # Adjusting threshold helps ignore background static on Twilio calls
+    vad_instance = silero.VAD(
+        min_speech_duration=0.1,  # Recognize speech faster
+        min_silence_duration=0.5, # Don't cut off user too early
+        prefix_padding_ms=200     # Buffer audio to catch the start of sentences
+    )
     
     xhemal = Agent(
         instructions=SYSTEM_PROMPT,
@@ -73,16 +76,21 @@ async def entrypoint(ctx: JobContext):
             model="gemini-2.0-flash-exp",
             voice="Puck"
         ),
-        tools=[lookup_knowledge]
+        tools=[lookup_knowledge],
+        # 3. OPTIMIZATION: Better turn-taking
+        # 0.6s is the 'sweet spot' to prevent the AI from interrupting you.
+        min_endpointing_delay=0.6, 
     )
 
+    # 4. OPTIMIZATION: High-Fidelity Session
     session = AgentSession(vad=vad_instance)
+    
+    # Start the session
     await session.start(agent=xhemal, room=ctx.room)
     
-    # Small buffer to ensure the audio pipeline is fully open
-    await asyncio.sleep(0.5)
+    # Give the audio bridge a moment to 'warm up'
+    await asyncio.sleep(0.7)
     
-    # 3. Generate immediate hype greeting
     await session.generate_reply(
         instructions="Yo, greet the user with hype! Say 'Yo, what's up? What are we talking about today?'"
     )
