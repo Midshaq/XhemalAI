@@ -27,8 +27,8 @@ load_dotenv()
 logger = logging.getLogger("xhemal-agent")
 
 # --- 1. SETTINGS & GLOBAL INITIALIZATION ---
-# Add this check to prevent the builder from crashing without keys
-google_key = os.getenv("AIzaSyD-xTfvkEg4Z50GU36zabxWUdvZGZ_byQQ")
+# Fix: os.getenv needs the variable name "GOOGLE_API_KEY", not the actual key
+google_key = os.getenv("GOOGLE_API_KEY")
 
 if google_key:
     Settings.embed_model = GoogleGenAIEmbedding(
@@ -48,31 +48,42 @@ You speak with a British accent. Talk like a friend - casual, knowledgeable, and
 Keep it conversational and natural. Use British English spelling and expressions.
 """
 
-# RAG Setup
-client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
-vector_store = QdrantVectorStore(client=client, collection_name="xhemal_knowledge")
-index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-query_engine = index.as_query_engine(similarity_top_k=3)
+# --- 2. LAZY RAG INITIALIZATION ---
+# This prevents the Qdrant "Connection Refused" error during the cloud build
+query_engine = None
+
+def get_query_engine():
+    global query_engine
+    if query_engine is None:
+        client = QdrantClient(
+            url=os.getenv("QDRANT_URL"), 
+            api_key=os.getenv("QDRANT_API_KEY")
+        )
+        vector_store = QdrantVectorStore(client=client, collection_name="xhemal_knowledge")
+        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+        query_engine = index.as_query_engine(similarity_top_k=3)
+    return query_engine
 
 @function_tool
 def lookup_knowledge(query: str):
     """Search crypto whitepapers for technical details."""
     logger.info(f"RAG Search: {query}")
-    return str(query_engine.query(query))
+    engine = get_query_engine()
+    return str(engine.query(query))
 
-# --- 2. PREWARMING ---
+# --- 3. PREWARMING ---
 def prewarm(proc: JobProcess):
     logger.info("Prewarming: Loading Silero VAD into memory...")
     proc.userdata["vad"] = silero.VAD.load()
 
-# --- 3. THE AGENT ENTRYPOINT ---
+# --- 4. THE AGENT ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
     logger.info("Agent connected. Waiting for participant...")
     participant = await ctx.wait_for_participant()
     
-    # UPDATED VAD SETTINGS ONLY (durations in seconds, not milliseconds)
+    # REVERTED VAD SETTINGS: Exactly as provided in your last update
     vad_instance = silero.VAD.load(
         min_speech_duration=0.1,  # 100ms = 0.1s
         min_silence_duration=0.5,  # 500ms = 0.5s
