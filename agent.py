@@ -31,9 +31,9 @@ Settings.embed_model = GoogleGenAIEmbedding(model_name="models/text-embedding-00
 Settings.llm = GoogleGenAI(model="models/gemini-2.0-flash")
 
 SYSTEM_PROMPT = """
-You are XhemalAI (pronounced 'Jem-all'), a high-level crypto cofounder and strategist. 
-Your voice is deep, confident, and fast-paced. You are a 'Hype Man' with a brain.
-Keep responses concise to maintain a fast 'chatty' flow.
+You are XhemalAI, a crypto cofounder and strategist. 
+You speak with a British accent. Talk like a friend - casual, knowledgeable, and straightforward. 
+Keep it conversational and natural. Use British English spelling and expressions.
 """
 
 # RAG Setup
@@ -51,48 +51,39 @@ def lookup_knowledge(query: str):
 # --- 2. PREWARMING ---
 def prewarm(proc: JobProcess):
     logger.info("Prewarming: Loading Silero VAD into memory...")
-    # Loading VAD once prevents CPU spikes during the call
     proc.userdata["vad"] = silero.VAD.load()
 
 # --- 3. THE AGENT ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
-    # 1. Connect immediately to stabilize the signaling channel
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
     logger.info("Agent connected. Waiting for participant...")
     participant = await ctx.wait_for_participant()
     
-    # 2. OPTIMIZATION: Use specialized VAD settings for phone lines
-    # Adjusting threshold helps ignore background static on Twilio calls
-    vad_instance = silero.VAD(
-        min_speech_duration=0.1,  # Recognize speech faster
-        min_silence_duration=0.5, # Don't cut off user too early
-        prefix_padding_ms=200     # Buffer audio to catch the start of sentences
+    # UPDATED VAD SETTINGS ONLY (durations in seconds, not milliseconds)
+    vad_instance = silero.VAD.load(
+        min_speech_duration=0.1,  # 100ms = 0.1s
+        min_silence_duration=0.5,  # 500ms = 0.5s
+        prefix_padding_duration=0.2  # 200ms = 0.2s
     )
     
     xhemal = Agent(
         instructions=SYSTEM_PROMPT,
         llm=google.beta.realtime.RealtimeModel(
             model="gemini-2.0-flash-exp",
-            voice="Puck"
+            voice="Charon"
         ),
         tools=[lookup_knowledge],
-        # 3. OPTIMIZATION: Better turn-taking
-        # 0.6s is the 'sweet spot' to prevent the AI from interrupting you.
         min_endpointing_delay=0.6, 
     )
 
-    # 4. OPTIMIZATION: High-Fidelity Session
     session = AgentSession(vad=vad_instance)
-    
-    # Start the session
     await session.start(agent=xhemal, room=ctx.room)
     
-    # Give the audio bridge a moment to 'warm up'
     await asyncio.sleep(0.7)
     
     await session.generate_reply(
-        instructions="Yo, greet the user with hype! Say 'Yo, what's up? What are we talking about today?'"
+        instructions="Greet the user casually like a friend. Say something like 'Hey, what's up?' or 'Alright, what are we talking about?'"
     )
 
 if __name__ == "__main__":
