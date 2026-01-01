@@ -3,7 +3,7 @@ import os
 import asyncio
 from dotenv import load_dotenv
 
-# LiveKit v1.0 Imports
+#v1.0 Imports
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -26,8 +26,7 @@ from qdrant_client import QdrantClient
 load_dotenv()
 logger = logging.getLogger("xhemal-agent")
 
-# --- 1. SETTINGS & GLOBAL INITIALIZATION ---
-# Fix: os.getenv needs the variable name "GOOGLE_API_KEY", not the actual key
+#SETTINGS & GLOBAL INITIALIZATION
 google_key = os.getenv("GOOGLE_API_KEY")
 
 if google_key:
@@ -43,13 +42,12 @@ else:
     logger.warning("GOOGLE_API_KEY not found. Skipping model initialization for build.")
 
 SYSTEM_PROMPT = """
-You are XhemalAI, a crypto cofounder and strategist. 
+You are XhemalAI, a crypto cofounder and strategist. You are smart.  
 You speak with a British accent. Talk like a friend - casual, knowledgeable, and straightforward. 
-Keep it conversational and natural. Use British English spelling and expressions.
+Keep it conversational and natural. Use British English spelling and expressions. Don't be cringe and overenthusiastic. You're my boy, not my boyfriend. 
 """
 
-# --- 2. LAZY RAG INITIALIZATION ---
-# This prevents the Qdrant "Connection Refused" error during the cloud build
+#LAZY RAG INITIALIZATION
 query_engine = None
 
 def get_query_engine():
@@ -71,19 +69,18 @@ def lookup_knowledge(query: str):
     engine = get_query_engine()
     return str(engine.query(query))
 
-# --- 3. PREWARMING ---
+#PREWARMING 
 def prewarm(proc: JobProcess):
     logger.info("Prewarming: Loading Silero VAD into memory...")
     proc.userdata["vad"] = silero.VAD.load()
 
-# --- 4. THE AGENT ENTRYPOINT ---
+#THE AGENT ENTRYPOINT
 async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     
     logger.info("Agent connected. Waiting for participant...")
     participant = await ctx.wait_for_participant()
     
-    # REVERTED VAD SETTINGS: Exactly as provided in your last update
     vad_instance = silero.VAD.load(
         min_speech_duration=0.1,  # 100ms = 0.1s
         min_silence_duration=0.5,  # 500ms = 0.5s
@@ -106,7 +103,7 @@ async def entrypoint(ctx: JobContext):
     await asyncio.sleep(0.7)
     
     await session.generate_reply(
-        instructions="Greet the user casually like a friend. Say something like 'Hey, what's up?' or 'Alright, what are we talking about?'"
+        instructions="Greet Mahmudur (pronounced Mahamadoor) casually like a friend. Say something like 'Hey, what's up?' or 'Alright, what are we talking about?'"
     )
 
 if __name__ == "__main__":
